@@ -231,7 +231,7 @@ async def ingest_episode(
     NOT mean "create with this UUID" — it calls `EpisodicNode.get_by_uuid` and
     raises NodeNotFoundError if absent, i.e. it means "process this existing
     episode". So persist the node first, then hand its UUID to add_episode.
-    Keeping one UUID end to end matters: MiroFish records these and polls them.
+    Keeping one UUID end to end matters: SoSim records these and polls them.
     """
     entity_specs, edge_specs = store.get_ontology(graph_id)
     entity_types = build_entity_types(entity_specs)
@@ -275,7 +275,7 @@ async def ingest_episode(
 class BatchWorker:
     """Processes batches out of the store, one item at a time per slot.
 
-    Zep ingestion is asynchronous: MiroFish POSTs items, POSTs /process, then
+    Zep ingestion is asynchronous: SoSim POSTs items, POSTs /process, then
     polls the summary until a terminal status. We reproduce that contract.
     """
 

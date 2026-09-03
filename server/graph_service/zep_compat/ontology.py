@@ -3,7 +3,7 @@
 Zep Cloud stores the ontology server-side and applies it to every ingest.
 Graphiti instead wants `entity_types` / `edge_types` / `edge_type_map` passed
 into each `add_episode` call, as Pydantic model classes. This module builds
-those classes from the JSON MiroFish sent to `PUT entity-types`.
+those classes from the JSON SoSim sent to `PUT entity-types`.
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ _TYPE_MAP: dict[str, type] = {
 
 # Graphiti raises EntityTypeValidationError when a custom attribute shadows a
 # field on its own EntityNode. Union of Node + EntityNode annotated fields in
-# graphiti_core/nodes.py. MiroFish's own reserved list misses `labels` and
+# graphiti_core/nodes.py. SoSim's own reserved list misses `labels` and
 # `attributes`, so we re-check here rather than trusting the caller.
 _GRAPHITI_RESERVED = frozenset(
     {

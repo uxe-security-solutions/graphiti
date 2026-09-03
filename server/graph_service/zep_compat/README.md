@@ -1,12 +1,12 @@
 # Zep Cloud v2 compatibility layer
 
 A drop-in replacement for the subset of the Zep Cloud API that
-[MiroFish](https://github.com/uxe-security-solutions/MiroFish) calls, implemented on
+[SoSim](https://github.com/uxe-security-solutions/MiroFish) calls, implemented on
 top of `graphiti_core` — the same engine Zep Cloud is built on. It exists so
-MiroFish can run with no hosted service: Zep Community Edition is discontinued and
+SoSim can run with no hosted service: Zep Community Edition is discontinued and
 there is no self-hostable Zep server.
 
-The `zep-cloud` Python SDK talks to this unmodified. MiroFish only sets
+The `zep-cloud` Python SDK talks to this unmodified. SoSim only sets
 `ZEP_BASE_URL`.
 
 ## Running it
@@ -25,7 +25,7 @@ means upstream changes to `main.py` never conflict here.
 
 | Variable | Default | Notes |
 |---|---|---|
-| `ZEP_COMPAT_API_PREFIX` | `/api/v2` | MiroFish pins the SDK `base_url` to `<host>/api/v2` |
+| `ZEP_COMPAT_API_PREFIX` | `/api/v2` | SoSim pins the SDK `base_url` to `<host>/api/v2` |
 | `ZEP_COMPAT_DB_PATH` | `./data/zep_compat.sqlite3` | graph registry, ontologies, batch state |
 | `ZEP_COMPAT_BATCH_CONCURRENCY` | `4` | episodes ingested at once; each fans out into several LLM calls |
 | `GRAPHITI_LLM_BASE_URL` | `http://localhost:8000/v1` | any OpenAI-compatible endpoint |
@@ -87,7 +87,7 @@ keeping one UUID end to end.
 
 **4. Empty results are not uniform.** `EntityNode.get_by_group_ids` returns `[]`;
 `EntityEdge.get_by_group_ids` *raises* `GroupsEdgesNotFoundError`. A fresh graph has
-no edges, so an unguarded read 500s on a completely normal state — and MiroFish
+no edges, so an unguarded read 500s on a completely normal state — and SoSim
 retries a 500 three times before failing the whole drain.
 
 And one upstream bug worth knowing: on FalkorDB the `WHERE n.uuid < $uuid` cursor
@@ -104,7 +104,7 @@ uv run --extra dev pytest tests/ -q --asyncio-mode=auto
 
 No GPU, no network, no database. `test_zep_compat_e2e.py` drives a real `AsyncZep`
 client over an ASGI transport, so paths, payloads, error mapping and the
-header-based pagination cursor are all exercised against the SDK MiroFish uses.
+header-based pagination cursor are all exercised against the SDK SoSim uses.
 
 Against a real FalkorDB:
 
@@ -115,7 +115,7 @@ ZEP_COMPAT_IT=1 FALKORDB_IT_PORT=6399 uv run --extra dev pytest tests/test_zep_c
 
 ## Scope
 
-Only the 17 endpoints MiroFish calls: graph create/get/delete/add/search,
+Only the 17 endpoints SoSim calls: graph create/get/delete/add/search,
 `entity-types`, node get / node edges / node listing, edge listing, episode get /
 mentions, and the six `batches` endpoints. Users, threads and fact-triples are not
 implemented.

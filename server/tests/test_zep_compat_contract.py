@@ -2,7 +2,7 @@
 
 These do not need a graph database, an LLM, or a network. They serialize the
 zep_compat response models exactly as FastAPI would and feed the JSON through
-zep-cloud's own `parse_obj_as`, which is the code path MiroFish executes.
+zep-cloud's own `parse_obj_as`, which is the code path SoSim executes.
 
 The point is to catch the aliasing trap: zep-cloud declares
 `uuid_: Annotated[str, FieldMetadata(alias='uuid')]`, so emitting `uuid_`
@@ -69,7 +69,7 @@ def test_entity_edge_roundtrip_preserves_temporal_fields():
     assert parsed.uuid_ == 'e-1'
     assert parsed.source_node_uuid == 'n-1'
     assert parsed.valid_at is not None
-    # MiroFish's zep_tools reads is_expired/is_invalid off these two.
+    # SoSim's zep_tools reads is_expired/is_invalid off these two.
     assert parsed.expired_at is None
     assert parsed.invalid_at is None
 
@@ -103,7 +103,7 @@ def test_batch_summary_roundtrip_exposes_polled_fields():
         batch_id='b-1',
         status='processing',
         item_count=10,
-        metadata={'mirofish_operation_id': 'op-1', 'graph_id': 'g-1'},
+        metadata={'sosim_operation_id': 'op-1', 'graph_id': 'g-1'},
         progress=m.BatchProgress(
             total_items=10, succeeded_items=4, failed_items=0, percent_complete=40.0
         ),
@@ -118,7 +118,7 @@ def test_batch_summary_roundtrip_exposes_polled_fields():
     assert parsed.progress.percent_complete == 40.0
     assert parsed.progress.succeeded_items == 4
     # _find_batch_by_operation_id matches on these metadata keys.
-    assert parsed.metadata['mirofish_operation_id'] == 'op-1'
+    assert parsed.metadata['sosim_operation_id'] == 'op-1'
 
 
 def test_batch_item_detail_roundtrip_has_episode_uuid_and_index():
@@ -249,7 +249,7 @@ def test_ontology_request_parses_what_the_sdk_sends():
 )
 def test_reserved_attribute_names_are_renamed(reserved):
     """Graphiti raises EntityTypeValidationError when a custom attribute shadows
-    an EntityNode field. MiroFish's own reserved list misses `labels` and
+    an EntityNode field. SoSim's own reserved list misses `labels` and
     `attributes`, so the shim must defend itself."""
     assert safe_field_name(reserved) == f'attr_{reserved}'
 

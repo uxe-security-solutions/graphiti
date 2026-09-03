@@ -110,7 +110,7 @@ def episode_out(node: GEpisodicNode) -> m.Episode:
         created_at=m.iso(node.created_at) or m.now_iso(),
         source=source if source in ('text', 'json', 'message', 'fact_triple') else 'text',
         source_description=node.source_description or '',
-        # `processed` is what MiroFish polls in
+        # `processed` is what SoSim polls in
         # zep_graph_memory_updater._wait_for_pending_episodes. Cloud ingests
         # asynchronously, so it can return an unprocessed episode; here
         # add_episode runs to completion before the EpisodicNode is readable,
@@ -241,7 +241,7 @@ async def search_graph(payload: m.SearchRequest, runtime: RuntimeDep):
             status_code=status.HTTP_400_BAD_REQUEST,
             detail='graph_id is required; user-scoped search is not supported',
         )
-    # MiroFish sends reranker='cross_encoder' from the report tooling and
+    # SoSim sends reranker='cross_encoder' from the report tooling and
     # 'rrf' from the OASIS profile generator. Honour cross_encoder only when a
     # real local reranker is configured (GRAPHITI_RERANKER=bge); with the
     # passthrough encoder a cross_encoder recipe would just reorder by input
@@ -264,7 +264,7 @@ async def search_graph(payload: m.SearchRequest, runtime: RuntimeDep):
         config = (
             EDGE_HYBRID_SEARCH_CROSS_ENCODER if want_cross_encoder else EDGE_HYBRID_SEARCH_RRF
         ).model_copy(deep=True)
-    # MiroFish already clamps to 50 via normalize_zep_search_limit; clamp again
+    # SoSim already clamps to 50 via normalize_zep_search_limit; clamp again
     # so a hand-rolled client cannot ask for an unbounded scan.
     config.limit = max(1, min(int(payload.limit or 10), 50))
 
@@ -296,9 +296,9 @@ async def list_nodes_by_graph(
     response: Response,
     runtime: RuntimeDep,
 ):
-    """MiroFish drives pagination off the zep-next-cursor RESPONSE header.
+    """SoSim drives pagination off the zep-next-cursor RESPONSE header.
 
-    An absent header means "last page"; a non-advancing cursor makes MiroFish
+    An absent header means "last page"; a non-advancing cursor makes SoSim
     raise. Graphiti's uuid_cursor is exactly the right primitive.
     """
     limit = max(1, min(int(payload.limit or 100), 100))
@@ -331,7 +331,7 @@ async def list_edges_by_graph(
         # graphiti_core's own edge accessor raises on an empty result where the
         # node one returns []. Our query does not, but keep the guard: "no edges
         # yet" is normal for a fresh graph, and a 500 here gets retried three
-        # times by MiroFish before failing the whole read.
+        # times by SoSim before failing the whole read.
         edges, next_offset = [], None
     if next_offset is not None:
         response.headers[NEXT_CURSOR_HEADER] = str(next_offset)
@@ -355,7 +355,7 @@ async def get_node_edges(node_uuid: str, runtime: RuntimeDep):
 async def get_node(node_uuid: str, runtime: RuntimeDep):
     _, graphiti = await resolve_graph_for_uuid(runtime, node_uuid, 'node')
     if graphiti is None:
-        # MiroFish's zep_tools and zep_entity_reader both translate this 404
+        # SoSim's zep_tools and zep_entity_reader both translate this 404
         # into "entity not found" rather than an error.
         raise HTTPException(status_code=404, detail=f'node {node_uuid} not found')
     try:
@@ -371,11 +371,11 @@ async def get_episode(episode_uuid: str, runtime: RuntimeDep):
 
     Careful with 404 here. Unlike graph.get and graph.node.get, the zep-cloud
     SDK's `graph.episode.get` does NOT map 404 to NotFoundError — it only
-    handles 400 and 500, so a 404 surfaces as a generic ApiError. MiroFish's
+    handles 400 and 500, so a 404 surfaces as a generic ApiError. SoSim's
     is_retryable_zep_error treats a 404 ApiError as non-retryable, which would
     raise straight out of _wait_for_pending_episodes and abort the run.
 
-    Episode UUIDs are handed to MiroFish at batch.add time, before the episode
+    Episode UUIDs are handed to SoSim at batch.add time, before the episode
     exists in the graph. So a UUID we know is queued must answer
     processed=false — the same thing Cloud does — and only a genuinely unknown
     UUID may 404.
@@ -429,7 +429,7 @@ async def get_episode_mentions(episode_uuid: str, runtime: RuntimeDep):
 
 @router.post('/graph', response_model=m.Episode)
 async def add_data(payload: m.AddDataRequest, runtime: RuntimeDep):
-    """Synchronous single-episode ingest. Slow with a local LLM — MiroFish's
+    """Synchronous single-episode ingest. Slow with a local LLM — SoSim's
     bulk path goes through /batches instead."""
     if not payload.graph_id:
         raise HTTPException(
@@ -444,7 +444,7 @@ async def add_data(payload: m.AddDataRequest, runtime: RuntimeDep):
         runtime.store,
         graph_id=payload.graph_id,
         episode_uuid=None,
-        name='mirofish-episode',
+        name='sosim-episode',
         body=payload.data,
         data_type=payload.type,
         source_description=payload.source_description or '',
@@ -457,14 +457,14 @@ async def add_data(payload: m.AddDataRequest, runtime: RuntimeDep):
 async def get_graph(graph_id: str, runtime: RuntimeDep):
     record = runtime.store.get_graph(graph_id)
     if record is None:
-        # MiroFish treats 404 here as "graph absent", not as a failure.
+        # SoSim treats 404 here as "graph absent", not as a failure.
         raise HTTPException(status_code=404, detail=f'graph {graph_id} not found')
     return graph_out(record)
 
 
 @router.delete('/graph/{graph_id}', response_model=m.SuccessResponse)
 async def delete_graph(graph_id: str, runtime: RuntimeDep):
-    # 404 for an unknown graph matches Cloud, and MiroFish's teardown in
+    # 404 for an unknown graph matches Cloud, and SoSim's teardown in
     # app/api/graph.py explicitly catches NotFoundError to stay idempotent.
     if runtime.store.get_graph(graph_id) is None:
         raise HTTPException(status_code=404, detail=f'graph {graph_id} not found')

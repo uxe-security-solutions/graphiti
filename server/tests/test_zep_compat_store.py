@@ -1,4 +1,4 @@
-"""Store tests for the invariants MiroFish's reconciliation logic depends on.
+"""Store tests for the invariants SoSim's reconciliation logic depends on.
 
 No graph database, no LLM, no network — SQLite only.
 
@@ -38,7 +38,7 @@ def test_unknown_graph_is_none_so_the_route_can_404(store):
 def test_create_graph_is_idempotent(store):
     first = store.create_graph('g-1', 'n', 'd', 'UTC')
     second = store.create_graph('g-1', 'other', 'other', 'UTC')
-    # Same identity on repeat create; MiroFish may retry after a lost response.
+    # Same identity on repeat create; SoSim may retry after a lost response.
     assert first['uuid'] == second['uuid']
     assert second['name'] == 'n'
 
@@ -69,7 +69,7 @@ def test_sequence_index_is_global_across_multiple_add_calls(store):
 
     So indexes must be global across the whole batch, not per-request.
     """
-    batch_id = store.create_batch({'mirofish_operation_id': 'op-1'}, None)
+    batch_id = store.create_batch({'sosim_operation_id': 'op-1'}, None)
     first = store.add_items(batch_id, _items(3))
     second = store.add_items(batch_id, _items(2, start=3))
 
@@ -81,7 +81,7 @@ def test_sequence_index_is_global_across_multiple_add_calls(store):
 
 
 def test_episode_uuid_assigned_at_add_time_and_is_unique(store):
-    """MiroFish reads episode_uuid off the *add* response, before processing."""
+    """SoSim reads episode_uuid off the *add* response, before processing."""
     batch_id = store.create_batch(None, None)
     created = store.add_items(batch_id, _items(4))
     uuids = [i['episode_uuid'] for i in created]
@@ -97,7 +97,7 @@ def test_episode_uuid_is_stable_between_add_and_list(store):
 
 
 # ---------------------------------------------------------------------------
-# pagination — MiroFish raises if a cursor fails to advance
+# pagination — SoSim raises if a cursor fails to advance
 # ---------------------------------------------------------------------------
 
 
@@ -111,7 +111,7 @@ def test_item_cursor_advances_and_terminates(store):
         seen.extend(page)
         if next_cursor is None:
             break
-        assert next_cursor != cursor, 'cursor must advance or MiroFish raises'
+        assert next_cursor != cursor, 'cursor must advance or SoSim raises'
         assert next_cursor not in seen_cursors
         seen_cursors.add(next_cursor)
         cursor = next_cursor
@@ -129,7 +129,7 @@ def test_item_last_page_returns_no_cursor(store):
 
 
 def test_exact_page_boundary_does_not_emit_a_dangling_cursor(store):
-    """A cursor on an exactly-full final page would make MiroFish fetch an
+    """A cursor on an exactly-full final page would make SoSim fetch an
     empty page; harmless but it must still terminate."""
     batch_id = store.create_batch(None, None)
     store.add_items(batch_id, _items(100))
@@ -142,7 +142,7 @@ def test_batch_list_cursor_advances_and_finds_by_metadata(store):
     """_find_batch_by_operation_id pages batch.list matching metadata."""
     target = None
     for i in range(150):
-        meta = {'mirofish_operation_id': f'op-{i}', 'graph_id': 'g-1'}
+        meta = {'sosim_operation_id': f'op-{i}', 'graph_id': 'g-1'}
         batch_id = store.create_batch(meta, None)
         if i == 120:
             target = batch_id
@@ -153,7 +153,7 @@ def test_batch_list_cursor_advances_and_finds_by_metadata(store):
         matches.extend(
             b
             for b in page
-            if (b['metadata'] or {}).get('mirofish_operation_id') == 'op-120'
+            if (b['metadata'] or {}).get('sosim_operation_id') == 'op-120'
             and (b['metadata'] or {}).get('graph_id') == 'g-1'
         )
         if next_cursor is None:
@@ -163,7 +163,7 @@ def test_batch_list_cursor_advances_and_finds_by_metadata(store):
         seen_cursors.add(next_cursor)
         cursor = next_cursor
 
-    # Exactly one match, or MiroFish raises "refusing ambiguity".
+    # Exactly one match, or SoSim raises "refusing ambiguity".
     assert len(matches) == 1
     assert matches[0]['batch_id'] == target
 
@@ -248,10 +248,10 @@ def test_claim_draft_batches_finds_only_in_flight_work(store):
 
 
 def test_state_survives_reopen(tmp_path):
-    """Restart durability: MiroFish reconciles a batch after a lost response."""
+    """Restart durability: SoSim reconciles a batch after a lost response."""
     path = tmp_path / 'compat.sqlite3'
     first = Store(path)
-    batch_id = first.create_batch({'mirofish_operation_id': 'op-1'}, None)
+    batch_id = first.create_batch({'sosim_operation_id': 'op-1'}, None)
     created = first.add_items(batch_id, _items(2))
     first.set_batch_status(batch_id, 'processing')
     first.close()
@@ -261,7 +261,7 @@ def test_state_survives_reopen(tmp_path):
         record = second.get_batch(batch_id)
         assert record is not None
         assert record['status'] == 'processing'
-        assert record['metadata']['mirofish_operation_id'] == 'op-1'
+        assert record['metadata']['sosim_operation_id'] == 'op-1'
         items, _ = second.list_items(batch_id, limit=10, cursor=None)
         assert [i['episode_uuid'] for i in items] == [
             i['episode_uuid'] for i in created

@@ -1,4 +1,4 @@
-"""Wire-exact request/response models for the Zep Cloud v2 subset MiroFish uses.
+"""Wire-exact request/response models for the Zep Cloud v2 subset SoSim uses.
 
 Field names here are the WIRE names on purpose. The zep-cloud SDK declares
 `uuid_: Annotated[str, FieldMetadata(alias="uuid")]`, so the JSON key is `uuid`;

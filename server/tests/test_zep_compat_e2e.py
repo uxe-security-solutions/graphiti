@@ -1,12 +1,12 @@
 """End-to-end: drive the shim with the REAL zep-cloud SDK over an ASGI transport.
 
 This is the test that actually proves the shim is a drop-in. It uses
-zep_cloud's own generated client — the same code MiroFish runs — so paths, HTTP
+zep_cloud's own generated client — the same code SoSim runs — so paths, HTTP
 methods, request bodies, response parsing, error mapping and the
 `zep-next-cursor` header are all exercised for real. No network, no graph
 database, no LLM: Graphiti's retrieval calls are stubbed with in-memory objects.
 
-MiroFish uses the sync `Zep` client; httpx can only drive an ASGI app
+SoSim uses the sync `Zep` client; httpx can only drive an ASGI app
 asynchronously, so we use `AsyncZep`. Both are generated from one spec and share
 identical paths, payload shapes and response parsers.
 
@@ -216,7 +216,7 @@ def wired(tmp_path, monkeypatch):
 
 @pytest.fixture
 async def client(wired):
-    """A real AsyncZep pointed at the in-process app, exactly as MiroFish
+    """A real AsyncZep pointed at the in-process app, exactly as SoSim
     configures it: base_url ending in /api/v2."""
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url='http://shim') as http:
@@ -233,7 +233,7 @@ pytestmark = pytest.mark.asyncio(loop_scope='function')
 
 async def test_create_then_get_graph(client):
     created = await client.graph.create(
-        graph_id='g-1', name='N', description='MiroFish Social Simulation Graph'
+        graph_id='g-1', name='N', description='SoSim Social Simulation Graph'
     )
     assert created.graph_id == 'g-1'
     fetched = await client.graph.get('g-1')
@@ -242,7 +242,7 @@ async def test_create_then_get_graph(client):
 
 
 async def test_get_unknown_graph_raises_not_found(client):
-    """MiroFish reconciles a lost create by calling graph.get and treating
+    """SoSim reconciles a lost create by calling graph.get and treating
     NotFoundError as 'the create really did fail'."""
     with pytest.raises(NotFoundError):
         await client.graph.get('missing')
@@ -330,8 +330,8 @@ async def test_graph_add_returns_an_episode_uuid(client, wired):
         type='text',
         data='agent 7 posted something',
         created_at='2024-01-01T00:00:00+00:00',
-        source_description='MiroFish simulation activity batch',
-        metadata={'source': 'mirofish_simulation', 'activity_count': 1},
+        source_description='SoSim simulation activity batch',
+        metadata={'source': 'sosim_simulation', 'activity_count': 1},
     )
     assert episode.uuid_
     assert graphiti.added[0]['group_id'] == 'g-1'
@@ -347,7 +347,7 @@ async def test_episode_get_reports_processed(client):
 
 async def test_episode_get_unknown_raises_a_404_api_error(client):
     """Note the asymmetry: zep-cloud's graph.episode.get handles only 400 and
-    500, so a 404 arrives as a generic ApiError, NOT NotFoundError. MiroFish
+    500, so a 404 arrives as a generic ApiError, NOT NotFoundError. SoSim
     treats a 404 ApiError as non-retryable and lets it propagate — which is why
     a queued episode must report processed=false instead of 404."""
     from zep_cloud.core.api_error import ApiError
@@ -362,7 +362,7 @@ async def test_queued_episode_reports_not_processed_instead_of_404(client, wired
     """batch.add hands out episode UUIDs before the episodes exist. Polling one
     must not 404, or _wait_for_pending_episodes aborts the run."""
     _, _, store = wired
-    batch_id = store.create_batch({'mirofish_operation_id': 'op-x'}, None)
+    batch_id = store.create_batch({'sosim_operation_id': 'op-x'}, None)
     created = store.add_items(
         batch_id, [{'graph_id': 'g-1', 'payload': 'queued chunk', 'data_type': 'text'}]
     )
@@ -396,7 +396,7 @@ async def test_failed_episode_surfaces_an_error_rather_than_polling_forever(
 # ---------------------------------------------------------------------------
 
 
-async def test_node_get_returns_the_fields_mirofish_reads(client):
+async def test_node_get_returns_the_fields_sosim_reads(client):
     node = await client.graph.node.get(uuid_='n-1')
     assert node.uuid_ == 'n-1'
     assert node.name == 'Alice'
@@ -449,7 +449,7 @@ async def test_search_limit_is_clamped_to_50(client, wired):
 
 
 async def _drain_pages(api_call, graph_id):
-    """Mirror MiroFish's zep_paging._fetch_all loop, assertions included."""
+    """Mirror SoSim's zep_paging._fetch_all loop, assertions included."""
     items, cursor, seen = [], None, set()
     while True:
         kwargs = {'limit': 100}
@@ -463,7 +463,7 @@ async def _drain_pages(api_call, graph_id):
         )
         if next_cursor is None:
             break
-        assert next_cursor != cursor, 'cursor must advance or MiroFish raises'
+        assert next_cursor != cursor, 'cursor must advance or SoSim raises'
         assert next_cursor not in seen
         seen.add(next_cursor)
         cursor = next_cursor
@@ -495,7 +495,7 @@ TERMINAL = {'succeeded', 'partial', 'failed', 'invalid', 'canceled'}
 
 
 async def _await_terminal(client, batch_id, tries=200):
-    """Mirror MiroFish's _wait_for_batch poll, minus the 3s sleep."""
+    """Mirror SoSim's _wait_for_batch poll, minus the 3s sleep."""
     import asyncio
 
     for _ in range(tries):
@@ -508,7 +508,7 @@ async def _await_terminal(client, batch_id, tries=200):
 
 async def _run_batch(client, chunks, graph_id='g-1', per_call=None):
     batch = await client.batch.create(
-        metadata={'mirofish_operation_id': 'op-1', 'graph_id': graph_id}
+        metadata={'sosim_operation_id': 'op-1', 'graph_id': graph_id}
     )
     assert batch.status == 'draft'
     per_call = per_call or len(chunks)
@@ -522,7 +522,7 @@ async def _run_batch(client, chunks, graph_id='g-1', per_call=None):
                     graph_id=graph_id,
                     data=chunk,
                     data_type='text',
-                    source_description='MiroFish source document chunk',
+                    source_description='SoSim source document chunk',
                     metadata={'chunk_index': start + i},
                 )
                 for i, chunk in enumerate(chunks[start : start + per_call])
@@ -585,13 +585,13 @@ async def test_batch_can_be_found_by_operation_id(client):
         matches.extend(
             b
             for b in (page.batches or [])
-            if (b.metadata or {}).get('mirofish_operation_id') == 'op-1'
+            if (b.metadata or {}).get('sosim_operation_id') == 'op-1'
             and (b.metadata or {}).get('graph_id') == 'g-1'
         )
         if page.next_cursor is None:
             break
         cursor = page.next_cursor
-    assert len(matches) == 1, 'MiroFish raises on more than one match'
+    assert len(matches) == 1, 'SoSim raises on more than one match'
 
 
 async def test_partial_batch_surfaces_the_failed_item_error(client, wired):
@@ -617,7 +617,7 @@ async def test_all_items_failing_yields_failed_not_partial(client, wired):
 
 
 async def test_process_is_idempotent(client):
-    """A lost /process response makes MiroFish reconcile with a GET, but a
+    """A lost /process response makes SoSim reconcile with a GET, but a
     duplicate POST must not re-run the batch either."""
     batch_id, _ = await _run_batch(client, ['a', 'b'])
     again = await client.batch.process(batch_id=batch_id)
@@ -669,7 +669,7 @@ async def test_edge_listing_on_a_graph_with_no_edges_returns_empty(client, wired
     """graphiti_core 0.29.3: EntityNode.get_by_group_ids returns [] when empty,
     but EntityEdge.get_by_group_ids RAISES GroupsEdgesNotFoundError. A fresh
     graph has no edges, so letting that escape 500s a completely normal read —
-    and MiroFish retries a 500 three times before failing the whole drain."""
+    and SoSim retries a 500 three times before failing the whole drain."""
     from graphiti_core.errors import GroupsEdgesNotFoundError
 
     async def raise_empty(driver, group_id, limit, offset):

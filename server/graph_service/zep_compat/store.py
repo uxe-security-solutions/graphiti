@@ -1,13 +1,13 @@
 """Durable state for the Zep-compatible layer.
 
 Graphiti itself owns the knowledge graph. This module owns only the metadata
-Zep Cloud keeps outside the graph and that MiroFish depends on:
+Zep Cloud keeps outside the graph and that SoSim depends on:
 
   * graph registry (so `GET graph/{id}` can 404 for an unknown graph)
   * per-graph ontology (Zep stores it server-side; Graphiti wants it per call)
-  * batch + batch item lifecycle (MiroFish polls this and reconciles restarts)
+  * batch + batch item lifecycle (SoSim polls this and reconciles restarts)
 
-SQLite, because MiroFish's reconciliation paths assume the server remembers a
+SQLite, because SoSim's reconciliation paths assume the server remembers a
 batch across a lost response — and, after a restart, across a lost process.
 """
 
@@ -299,7 +299,7 @@ class Store:
     def add_items(self, batch_id: str, items: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Append items, assigning globally increasing sequence_index.
 
-        MiroFish reconciles an ambiguous `batch.add` by listing items and
+        SoSim reconciles an ambiguous `batch.add` by listing items and
         asserting the indexes are exactly range(expected_count), so the index
         must be global across the whole batch, not per-request.
         """
@@ -319,7 +319,7 @@ class Store:
                     'sequence_index': start + offset,
                     'status': 'pending',
                     'graph_id': item.get('graph_id'),
-                    # Assign the episode UUID now: MiroFish reads episode_uuid
+                    # Assign the episode UUID now: SoSim reads episode_uuid
                     # off the *add* response, long before processing runs.
                     'episode_uuid': str(uuid_lib.uuid4()),
                     'kind': item.get('kind') or 'graph_episode',

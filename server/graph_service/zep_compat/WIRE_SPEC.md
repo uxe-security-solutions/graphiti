@@ -1,10 +1,10 @@
-# Zep Cloud v2 wire contract (the subset MiroFish uses)
+# Zep Cloud v2 wire contract (the subset SoSim uses)
 
 Derived mechanically from the `zep-cloud==3.25.0` Python SDK wheel, not from docs.
 Everything below is what the SDK actually puts on the wire and what it will accept back.
 
 Base path: the SDK is constructed with `base_url=<X>` and appends these paths, so the
-shim must be mounted such that `<X>/graph/...` resolves. MiroFish pins
+shim must be mounted such that `<X>/graph/...` resolves. SoSim pins
 `ZEP_CLOUD_BASE_URL = "https://api.getzep.com/api/v2"`, therefore the shim serves
 under the prefix `/api/v2`.
 
@@ -51,13 +51,13 @@ Note the two `get_by_graph_id` calls are **POST with a JSON body**, despite read
 
 ## Pagination (`zep-next-cursor`)
 
-`fetch_all_nodes` / `fetch_all_edges` in MiroFish's `app/utils/zep_paging.py` drive
+`fetch_all_nodes` / `fetch_all_edges` in SoSim's `app/utils/zep_paging.py` drive
 pagination **entirely from a response header**, not the body:
 
 - send `{"limit": <=100, "cursor": <opaque str>}`
 - read the response header `zep-next-cursor`
 - absent header => last page, stop
-- a cursor that repeats or equals the one just sent => MiroFish raises
+- a cursor that repeats or equals the one just sent => SoSim raises
   `RuntimeError("... pagination cursor did not advance ...")`
 
 So the shim MUST set `zep-next-cursor` on node/edge list responses when more rows
@@ -105,13 +105,13 @@ BatchAddItem type* (graph_episode|thread_message)  content? created_at? data? da
 
 ## Error mapping
 
-The SDK raises typed exceptions off HTTP status, and MiroFish catches some of them
+The SDK raises typed exceptions off HTTP status, and SoSim catches some of them
 (notably `zep_cloud.NotFoundError`). The shim must therefore use:
 
-- `404` -> `NotFoundError`  (MiroFish treats this as "graph/node absent", not a failure)
+- `404` -> `NotFoundError`  (SoSim treats this as "graph/node absent", not a failure)
 - `400` -> `BadRequestError`
 - `500` -> `InternalServerError`
-- `408` / `429` / `5xx` -> retried by MiroFish's `is_retryable_zep_error`
+- `408` / `429` / `5xx` -> retried by SoSim's `is_retryable_zep_error`
 
 Returning `200` with an error body will be silently misread as success. Use real
 status codes.

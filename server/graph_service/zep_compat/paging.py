@@ -8,12 +8,12 @@ FalkorDB 4.x, where even a literal `n.uuid < '0005-u'` returns every row while
 `ORDER BY` and `SKIP`/`LIMIT` behave correctly. The result is that every page
 comes back identical, so a drain never terminates and rows repeat.
 
-MiroFish's `fetch_all_nodes` / `fetch_all_edges` treat `zep-next-cursor` as an
+SoSim's `fetch_all_nodes` / `fetch_all_edges` treat `zep-next-cursor` as an
 opaque string, so we are free to make it a row offset and page with SKIP/LIMIT,
 which the same live test showed to be exact.
 
 Caveat: offset paging is only stable if the result set does not change mid-drain.
-MiroFish reads a graph after ingestion has reached a terminal batch status, so
+SoSim reads a graph after ingestion has reached a terminal batch status, so
 that holds. Concurrent writes during a drain could shift rows across pages.
 """
 

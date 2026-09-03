@@ -26,7 +26,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger('zep_compat')
 
-# MiroFish pins the SDK base_url to <host>/api/v2, so every route lives there.
+# SoSim pins the SDK base_url to <host>/api/v2, so every route lives there.
 API_PREFIX = os.environ.get('ZEP_COMPAT_API_PREFIX', '/api/v2')
 
 
@@ -48,7 +48,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title='Zep-compatible Graph API (Graphiti-backed)',
-    description='Local drop-in for the Zep Cloud v2 endpoints MiroFish calls.',
+    description='Local drop-in for the Zep Cloud v2 endpoints SoSim calls.',
     lifespan=lifespan,
 )
 

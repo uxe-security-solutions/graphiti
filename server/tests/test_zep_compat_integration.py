@@ -146,11 +146,11 @@ async def test_fresh_graph_node_listing_is_empty(live):
 
 async def test_batch_ingest_persists_episodes_with_the_promised_uuids(live):
     """The episode UUIDs handed out at batch.add time must be the UUIDs that
-    end up in the graph — MiroFish records them and polls them later."""
+    end up in the graph — SoSim records them and polls them later."""
     client, _, _, gid = live
     await client.graph.create(graph_id=gid, name='it', description='d')
 
-    batch = await client.batch.create(metadata={'mirofish_operation_id': 'op-it'})
+    batch = await client.batch.create(metadata={'sosim_operation_id': 'op-it'})
     details = await client.batch.add(
         batch_id=batch.batch_id,
         items=[
@@ -159,7 +159,7 @@ async def test_batch_ingest_persists_episodes_with_the_promised_uuids(live):
                 graph_id=gid,
                 data=f'Document chunk number {i}.',
                 data_type='text',
-                source_description='MiroFish source document chunk',
+                source_description='SoSim source document chunk',
             )
             for i in range(3)
         ],
@@ -179,7 +179,7 @@ async def test_batch_ingest_persists_episodes_with_the_promised_uuids(live):
 
 async def test_queued_episode_is_not_processed_yet(live):
     """Before /process runs, a promised UUID must answer processed=false rather
-    than 404 — a 404 here is a non-retryable ApiError inside MiroFish."""
+    than 404 — a 404 here is a non-retryable ApiError inside SoSim."""
     client, _, _, gid = live
     await client.graph.create(graph_id=gid, name='it', description='d')
     batch = await client.batch.create(metadata=None)
@@ -211,7 +211,7 @@ async def test_graph_delete_clears_the_group_and_then_404s(live):
         type='text',
         data='Something happened.',
         created_at=datetime.now(timezone.utc).isoformat(),
-        source_description='MiroFish simulation activity batch',
+        source_description='SoSim simulation activity batch',
     )
     await client.graph.delete(graph_id=gid)
 
@@ -222,7 +222,7 @@ async def test_graph_delete_clears_the_group_and_then_404s(live):
 
 
 async def test_pagination_over_a_real_multi_page_node_set(live):
-    """Drive the zep-next-cursor loop exactly as MiroFish's zep_paging does,
+    """Drive the zep-next-cursor loop exactly as SoSim's zep_paging does,
     against real rows and the driver's own uuid cursor."""
     client, pool, _, gid = live
     from graphiti_core.nodes import EntityNode
