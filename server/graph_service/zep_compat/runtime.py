@@ -40,6 +40,7 @@ from graphiti_core.embedder.openai import OpenAIEmbedder, OpenAIEmbedderConfig
 from graphiti_core.llm_client.config import LLMConfig
 from graphiti_core.llm_client.openai_generic_client import OpenAIGenericClient
 from graphiti_core.nodes import EpisodeType, EpisodicNode
+from openai import AsyncOpenAI
 
 from .ontology import build_edge_types, build_entity_types
 from .store import Store
@@ -111,14 +112,48 @@ def build_driver(database: str | None = None):
     raise ValueError(f'Unsupported GRAPHITI_DB_BACKEND={backend!r} (use falkordb or neo4j)')
 
 
-def build_graphiti(database: str | None = None) -> Graphiti:
-    llm_client = OpenAIGenericClient(
+def _build_openai_http_client(
+    *, api_key: str, base_url: str | None, timeout_env: str, default_timeout: str
+) -> AsyncOpenAI:
+    """Build an AsyncOpenAI with an explicit timeout and no hidden retries.
+
+    Left to construct its own client, graphiti inherits the openai SDK defaults:
+    a 600 second timeout and max_retries=2, and the SDK DOES retry
+    APITimeoutError. One hung extraction therefore burns up to 30 minutes with
+    nothing in the logs but silence — which is most of the 50 minute run that
+    ended in a single APITimeoutError. Both knobs are set here so a stalled
+    endpoint fails in bounded time and says so once.
+    """
+    return AsyncOpenAI(
+        api_key=api_key,
+        base_url=base_url,
+        timeout=float(_env(timeout_env, default_timeout) or default_timeout),
+        max_retries=0,
+    )
+
+
+def build_llm_client() -> OpenAIGenericClient:
+    """The LLM client every ingest runs through.
+
+    Factored out of build_graphiti so /graph/preflight can probe the exact same
+    configuration — model, budget and structured-output mode — without needing a
+    graph, or a database, to exist yet.
+    """
+    api_key = _env('GRAPHITI_LLM_API_KEY', 'local') or 'local'
+    base_url = _env('GRAPHITI_LLM_BASE_URL', 'http://localhost:8000/v1')
+    return OpenAIGenericClient(
         config=LLMConfig(
-            api_key=_env('GRAPHITI_LLM_API_KEY', 'local') or 'local',
-            base_url=_env('GRAPHITI_LLM_BASE_URL', 'http://localhost:8000/v1'),
+            api_key=api_key,
+            base_url=base_url,
             model=_env('GRAPHITI_LLM_MODEL', 'local-llm') or 'local-llm',
             small_model=_env('GRAPHITI_LLM_SMALL_MODEL', _env('GRAPHITI_LLM_MODEL', 'local-llm')),
             temperature=float(_env('GRAPHITI_LLM_TEMPERATURE', '0.0') or 0.0),
+        ),
+        client=_build_openai_http_client(
+            api_key=api_key,
+            base_url=base_url,
+            timeout_env='GRAPHITI_LLM_REQUEST_TIMEOUT',
+            default_timeout='180',
         ),
         max_tokens=int(_env('GRAPHITI_LLM_MAX_TOKENS', '16384') or 16384),
         # 'json_schema' uses the server's constrained decoding (vLLM xgrammar).
@@ -126,18 +161,32 @@ def build_graphiti(database: str | None = None) -> Graphiti:
         structured_output_mode=_env('GRAPHITI_STRUCTURED_OUTPUT_MODE', 'json_schema'),  # type: ignore[arg-type]
     )
 
-    embedder = OpenAIEmbedder(
+
+def build_embedder() -> OpenAIEmbedder:
+    api_key = _env('GRAPHITI_EMBEDDER_API_KEY', 'local') or 'local'
+    base_url = _env('GRAPHITI_EMBEDDER_BASE_URL', 'http://localhost:8081/v1')
+    return OpenAIEmbedder(
         config=OpenAIEmbedderConfig(
-            api_key=_env('GRAPHITI_EMBEDDER_API_KEY', 'local') or 'local',
-            base_url=_env('GRAPHITI_EMBEDDER_BASE_URL', 'http://localhost:8081/v1'),
+            api_key=api_key,
+            base_url=base_url,
             embedding_model=_env('GRAPHITI_EMBEDDER_MODEL', 'BAAI/bge-m3') or 'BAAI/bge-m3',
-        )
+        ),
+        # Same 600s-and-2-silent-retries hazard as the LLM client: OpenAIEmbedder
+        # also builds its own AsyncOpenAI when handed none.
+        client=_build_openai_http_client(
+            api_key=api_key,
+            base_url=base_url,
+            timeout_env='GRAPHITI_EMBEDDER_REQUEST_TIMEOUT',
+            default_timeout='180',
+        ),
     )
 
+
+def build_graphiti(database: str | None = None) -> Graphiti:
     return Graphiti(
         graph_driver=build_driver(database),
-        llm_client=llm_client,
-        embedder=embedder,
+        llm_client=build_llm_client(),
+        embedder=build_embedder(),
         cross_encoder=_build_cross_encoder(),
         max_coroutines=int(_env('GRAPHITI_MAX_COROUTINES', '4') or 4),
     )

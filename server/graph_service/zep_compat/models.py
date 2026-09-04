@@ -262,6 +262,32 @@ class EntityTypeResponse(BaseModel):
     edge_types: list[EdgeType] | None = None
 
 
+class PreflightRequest(BaseModel):
+    """Body of POST graph/preflight.
+
+    The ontology arrives in the body rather than being read from the store: the
+    whole point of the probe is to run before the first build, when the graph
+    does not exist yet and nothing has been PUT to entity-types.
+    """
+
+    entity_types: list[EntityType] | None = None
+    edge_types: list[EdgeType] | None = None
+    sample_text: str = (
+        'Acme Corp announced on 2024-03-01 that Dana Whitfield will lead its '
+        'Rotterdam security operations centre, replacing Ivo Lang.'
+    )
+
+
+class PreflightResponse(BaseModel):
+    ok: bool
+    detail: str
+    finish_reason: str | None = None
+    completion_tokens: int | None = None
+    max_tokens: int
+    structured_output_mode: str
+    elapsed_seconds: float
+
+
 class CreateBatchRequest(BaseModel):
     metadata: dict[str, Any] | None = None
     ignore_roles: list[str] | None = None

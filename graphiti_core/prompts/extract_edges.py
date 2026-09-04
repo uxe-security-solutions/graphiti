@@ -21,21 +21,40 @@ from pydantic import BaseModel, Field
 from .models import Message, PromptFunction, PromptVersion
 from .prompt_helpers import to_prompt_json
 
+# Ceilings on the unbounded arrays and strings this schema emits. See the longer note
+# in extract_nodes.py: under json_schema the grammar lets an array run until max_tokens,
+# which is how a 4096-token cap produced 4148 characters of runaway integers. These are
+# generous enough never to reject a plausible extraction.
+
+# Largest episode group any caller builds: bulk_utils.CHUNK_SIZE. Not imported —
+# bulk_utils imports the prompts, so the dependency only runs one way.
+MAX_EPISODE_INDICES = 10
+MAX_ENTITY_NAME_CHARS = 256
+MAX_RELATION_TYPE_CHARS = 128
+MAX_FACT_CHARS = 2000
+MAX_EXTRACTED_EDGES = 200
+
 
 class Edge(BaseModel):
     source_entity_name: str = Field(
-        ..., description='The name of the source entity from the ENTITIES list'
+        ...,
+        description='The name of the source entity from the ENTITIES list',
+        max_length=MAX_ENTITY_NAME_CHARS,
     )
     target_entity_name: str = Field(
-        ..., description='The name of the target entity from the ENTITIES list'
+        ...,
+        description='The name of the target entity from the ENTITIES list',
+        max_length=MAX_ENTITY_NAME_CHARS,
     )
     relation_type: str = Field(
         ...,
         description='The type of relationship between the entities, in SCREAMING_SNAKE_CASE (e.g., WORKS_AT, LIVES_IN, IS_FRIENDS_WITH)',
+        max_length=MAX_RELATION_TYPE_CHARS,
     )
     fact: str = Field(
         ...,
         description='A natural language description of the relationship between the entities, paraphrased from the source text',
+        max_length=MAX_FACT_CHARS,
     )
     valid_at: str | None = Field(
         None,
@@ -49,11 +68,12 @@ class Edge(BaseModel):
         default_factory=lambda: [0],
         description='List of episode numbers (0-indexed) that this fact was derived from. '
         'When processing a single episode, this should be [0].',
+        max_length=MAX_EPISODE_INDICES,
     )
 
 
 class ExtractedEdges(BaseModel):
-    edges: list[Edge]
+    edges: list[Edge] = Field(..., max_length=MAX_EXTRACTED_EDGES)
 
 
 class EdgeTimestamps(BaseModel):

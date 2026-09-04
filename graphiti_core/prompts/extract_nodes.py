@@ -24,9 +24,38 @@ from .models import Message, PromptFunction, PromptVersion
 from .prompt_helpers import to_prompt_json
 from .snippets import summary_instructions
 
+# Ceilings on every unbounded array and string this schema emits.
+#
+# Under a json_schema response_format the server's constrained decoder will happily
+# let an array grow forever: the only stop condition is the model choosing to close
+# it, and the only ceiling is max_tokens. That is how a 4096-token completion came
+# back as 4148 characters — 1.01 chars/token, the signature of a runaway stream of
+# single-character integer tokens rather than prose — and died in json.loads.
+#
+# These are deliberately generous: they must never reject a plausible extraction,
+# only stop a runaway. Overshooting one now raises a pydantic ValidationError, which
+# fails fast with a named cause instead of a JSONDecodeError column offset.
+#
+# NOTE: vLLM's xgrammar backend has historically treated array maxItems as
+# unsupported and may ignore it at decode time. These bounds are still correct and
+# still enforced on parse; see the runbook note on probing the deployment.
+
+# Largest episode group any caller builds: bulk_utils.CHUNK_SIZE. Not imported —
+# bulk_utils imports the prompts, so the dependency only runs one way.
+MAX_EPISODE_INDICES = 10
+MAX_ENTITY_NAME_CHARS = 256
+MAX_EXTRACTED_ENTITIES = 200
+# Summaries are asked to stay under MAX_SUMMARY_CHARS and are truncated downstream
+# (graphiti.py, node_operations.py) when they overshoot, so the schema ceiling has to
+# sit well above the target or it would turn today's graceful truncation into a hard
+# validation failure.
+MAX_SUMMARY_SCHEMA_CHARS = MAX_SUMMARY_CHARS * 4
+
 
 class ExtractedEntity(BaseModel):
-    name: str = Field(..., description='Name of the extracted entity')
+    name: str = Field(
+        ..., description='Name of the extracted entity', max_length=MAX_ENTITY_NAME_CHARS
+    )
     entity_type_id: int = Field(
         description='ID of the classified entity type. '
         'Must be one of the provided entity_type_id integers.',
@@ -35,26 +64,36 @@ class ExtractedEntity(BaseModel):
         default_factory=lambda: [0],
         description='List of episode numbers (0-indexed) this entity was extracted from. '
         'When processing a single episode, this should be [0].',
+        max_length=MAX_EPISODE_INDICES,
     )
 
 
 class ExtractedEntities(BaseModel):
-    extracted_entities: list[ExtractedEntity] = Field(..., description='List of extracted entities')
+    extracted_entities: list[ExtractedEntity] = Field(
+        ..., description='List of extracted entities', max_length=MAX_EXTRACTED_ENTITIES
+    )
 
 
 class EntitySummary(BaseModel):
-    summary: str = Field(..., description='Summary of the entity')
+    summary: str = Field(
+        ..., description='Summary of the entity', max_length=MAX_SUMMARY_SCHEMA_CHARS
+    )
 
 
 class SummarizedEntity(BaseModel):
-    name: str = Field(..., description='Name of the entity being summarized')
-    summary: str = Field(..., description='Updated summary for the entity')
+    name: str = Field(
+        ..., description='Name of the entity being summarized', max_length=MAX_ENTITY_NAME_CHARS
+    )
+    summary: str = Field(
+        ..., description='Updated summary for the entity', max_length=MAX_SUMMARY_SCHEMA_CHARS
+    )
 
 
 class SummarizedEntities(BaseModel):
     summaries: list[SummarizedEntity] = Field(
         ...,
         description='List of entity summaries. Only include entities that need summary updates.',
+        max_length=MAX_EXTRACTED_ENTITIES,
     )
 
 

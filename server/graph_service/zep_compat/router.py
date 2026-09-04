@@ -9,8 +9,11 @@ Route order matters: the concrete /graph/... routes are declared before the
 
 from __future__ import annotations
 
+import json
 import logging
 import os
+from datetime import datetime, timezone
+from time import perf_counter
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
@@ -21,9 +24,11 @@ from graphiti_core.errors import (
     GroupsNodesNotFoundError,
     NodeNotFoundError,
 )
+from graphiti_core.llm_client.errors import TruncatedResponseError
 from graphiti_core.nodes import EntityNode as GEntityNode
-from graphiti_core.nodes import EpisodicNode as GEpisodicNode
 from graphiti_core.nodes import EpisodeType
+from graphiti_core.nodes import EpisodicNode as GEpisodicNode
+from graphiti_core.prompts.extract_nodes import ExtractedEntities
 from graphiti_core.search.search_config_recipes import (
     COMBINED_HYBRID_SEARCH_CROSS_ENCODER,
     COMBINED_HYBRID_SEARCH_RRF,
@@ -34,10 +39,19 @@ from graphiti_core.search.search_config_recipes import (
 )
 from graphiti_core.utils.maintenance.graph_data_operations import clear_data
 
+# Private on purpose: the preflight probe has to make the SAME call the ingest makes,
+# so it reuses graphiti's own extraction entry point instead of a look-alike that
+# could drift from it.
+from graphiti_core.utils.maintenance.node_operations import (
+    _build_entity_types_context,
+    _call_extraction_llm,
+)
+from pydantic import ValidationError
+
 from . import models as m
 from .ontology import build_edge_types, build_entity_types
 from .paging import page_edges, page_nodes, parse_cursor
-from .runtime import Runtime, _parse_time, ingest_episode
+from .runtime import Runtime, _parse_time, build_llm_client, ingest_episode
 
 logger = logging.getLogger(__name__)
 
@@ -477,6 +491,123 @@ async def delete_graph(graph_id: str, runtime: RuntimeDep):
     # Drop the cached instance so a later graph with the same id starts clean.
     await runtime.pool.forget(graph_id)
     return m.SuccessResponse(message=f'graph {graph_id} deleted')
+
+
+# ---------------------------------------------------------------------------
+# preflight
+# ---------------------------------------------------------------------------
+
+
+@router.post('/graph/preflight', response_model=m.PreflightResponse)
+async def preflight(payload: m.PreflightRequest):
+    """Run one real extraction and report whether this endpoint can serve a build.
+
+    A bare chat completion would answer green while the build still dies, so this
+    goes through the SAME client, schema, max_tokens and response_format the ingest
+    uses: `_call_extraction_llm` is the exact function `extract_nodes` calls, and the
+    context dict is built the same way, so the probe cannot drift from the real path.
+
+    Two production runs were burned finding out at the end of a 50-minute build that
+    the endpoint could not produce a parseable structured response. This answers that
+    in one call, before the first episode, and names the knob to turn.
+
+    Being the real path, it also pays the real retries: an unparseable body is a
+    JSONDecodeError, which the client treats as transient and retries four times with
+    backoff, so a red probe can take tens of seconds. `elapsed_seconds` reports what it
+    actually cost. A truncation, by contrast, comes back on the first attempt.
+
+    Declared here rather than above the `/graph/{graph_id}` catch-all because that
+    catch-all only claims GET and DELETE; a POST cannot be swallowed by it.
+    """
+    started = perf_counter()
+    llm_client = build_llm_client()
+    max_tokens = llm_client.max_tokens
+    mode = llm_client.structured_output_mode
+
+    def result(ok: bool, detail: str) -> m.PreflightResponse:
+        return m.PreflightResponse(
+            ok=ok,
+            detail=detail,
+            finish_reason=llm_client.last_finish_reason,
+            completion_tokens=llm_client.last_completion_tokens,
+            max_tokens=max_tokens,
+            structured_output_mode=mode,
+            elapsed_seconds=round(perf_counter() - started, 3),
+        )
+
+    # Build the ontology from the body. This also surfaces a malformed ontology
+    # without spending an LLM call on it.
+    try:
+        entity_types = build_entity_types([t.model_dump() for t in payload.entity_types or []])
+        build_edge_types([t.model_dump() for t in payload.edge_types or []])
+    except Exception as exc:  # noqa: BLE001 - a probe reports, it does not raise
+        logger.warning('Preflight ontology build failed', exc_info=True)
+        return result(
+            False,
+            f'The ontology in the request body could not be turned into Graphiti types: '
+            f'{type(exc).__name__}: {exc}. Fix the entity_types/edge_types payload.',
+        )
+
+    now = datetime.now(timezone.utc)
+    episode = GEpisodicNode(
+        name='preflight',
+        group_id='preflight',
+        labels=[],
+        source=EpisodeType.text,
+        content=payload.sample_text,
+        source_description='preflight probe',
+        created_at=now,
+        valid_at=now,
+        entity_edges=[],
+    )
+    context = {
+        'episode_content': episode.content,
+        'episode_timestamp': now.isoformat(),
+        'previous_episodes': [],
+        'custom_extraction_instructions': '',
+        'entity_types': _build_entity_types_context(entity_types or None),
+        'source_description': episode.source_description,
+    }
+
+    try:
+        llm_response = await _call_extraction_llm(llm_client, episode, context)
+        ExtractedEntities(**llm_response)
+    except TruncatedResponseError as exc:
+        return result(
+            False,
+            f'The model hit the token cap before closing its JSON: {exc.message} '
+            f'Lower the ontology size or raise GRAPHITI_LLM_MAX_TOKENS (currently '
+            f'{max_tokens}); note that raising it trades truncation for timeout.',
+        )
+    except ValidationError as exc:
+        return result(
+            False,
+            f'The endpoint returned JSON that does not match the extraction schema: '
+            f'{exc.error_count()} validation error(s), first: {exc.errors()[0]}. If the '
+            f'server is ignoring the json_schema response_format, set '
+            f'GRAPHITI_STRUCTURED_OUTPUT_MODE=json_object so the schema goes in the prompt.',
+        )
+    except json.JSONDecodeError as exc:
+        return result(
+            False,
+            f'The endpoint returned a body that is not JSON: {exc}. In json_schema mode '
+            f'this usually means the server is not enforcing the grammar; try '
+            f'GRAPHITI_STRUCTURED_OUTPUT_MODE=json_object.',
+        )
+    except Exception as exc:  # noqa: BLE001 - a probe reports, it does not raise
+        logger.warning('Preflight extraction failed', exc_info=True)
+        return result(
+            False,
+            f'The extraction call failed: {type(exc).__name__}: {exc}. Check '
+            f'GRAPHITI_LLM_BASE_URL / GRAPHITI_LLM_MODEL and, for a timeout, '
+            f'GRAPHITI_LLM_REQUEST_TIMEOUT.',
+        )
+
+    return result(
+        True,
+        f'One structured extraction completed against {llm_client.model!r} in '
+        f'{mode} mode within max_tokens={max_tokens}.',
+    )
 
 
 # ---------------------------------------------------------------------------

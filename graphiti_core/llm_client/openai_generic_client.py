@@ -28,7 +28,7 @@ from pydantic import BaseModel
 from ..prompts.models import Message
 from .client import LLMClient, get_extraction_language_instruction
 from .config import DEFAULT_MAX_TOKENS, LLMConfig, ModelSize
-from .errors import EmptyResponseError, RateLimitError
+from .errors import EmptyResponseError, RateLimitError, TruncatedResponseError
 
 logger = logging.getLogger(__name__)
 
@@ -99,6 +99,13 @@ class OpenAIGenericClient(LLMClient):
         else:
             self.client = client
 
+        # Telemetry from the most recent completion. Only meaningful on a client
+        # that made exactly one call (concurrent calls on a shared client race),
+        # which is why the /graph/preflight probe builds its own instance rather
+        # than borrowing a pooled one.
+        self.last_finish_reason: str | None = None
+        self.last_completion_tokens: int | None = None
+
     def _build_response_format(self, response_model: type[BaseModel] | None) -> dict[str, Any]:
         """Build the ``response_format`` payload for the chat completion request.
 
@@ -159,11 +166,62 @@ class OpenAIGenericClient(LLMClient):
                 max_tokens=max_tokens,
                 response_format=self._build_response_format(response_model),  # type: ignore[arg-type]
             )
-            result = response.choices[0].message.content or ''
-            # An empty body (refusal, length finish_reason, or a flaky endpoint) would make
-            # json.loads raise a cryptic JSONDecodeError; surface a clear error instead.
+            choice = response.choices[0]
+            # SimpleNamespace-style stubs and a few providers omit these; never assume.
+            finish_reason: str | None = getattr(choice, 'finish_reason', None)
+            usage = getattr(response, 'usage', None)
+            completion_tokens: int | None = getattr(usage, 'completion_tokens', None)
+            self.last_finish_reason = finish_reason
+            self.last_completion_tokens = completion_tokens
+
+            # Log this on EVERY call. Both production failures were invisible because the
+            # only two numbers that explain them — where the generation stopped and how
+            # many tokens it spent — were received and discarded.
+            logger.debug(
+                'LLM completion: finish_reason=%s completion_tokens=%s max_tokens=%s',
+                finish_reason,
+                completion_tokens,
+                max_tokens,
+            )
+            if (
+                finish_reason != 'length'
+                and completion_tokens is not None
+                and completion_tokens >= max_tokens * 0.9
+            ):
+                # Not truncated yet, but one slightly longer episode would be. Say so
+                # while the run is still succeeding rather than after it fails.
+                logger.warning(
+                    'LLM completion used %s of %s max_tokens (>=90%% of the cap); '
+                    'this extraction is close to being truncated',
+                    completion_tokens,
+                    max_tokens,
+                )
+
+            result = choice.message.content or ''
+            # An empty body (refusal or a flaky endpoint) would make json.loads raise a
+            # cryptic JSONDecodeError; surface a clear error instead. This guard stays
+            # ahead of the truncation check, so it also catches the corner case of a cap
+            # so low that nothing at all was emitted — hence finish_reason in the message.
             if not result:
-                raise EmptyResponseError('LLM returned an empty response')
+                raise EmptyResponseError(
+                    f'LLM returned an empty response (finish_reason={finish_reason!r}, '
+                    f'max_tokens={max_tokens})'
+                )
+            # A body clipped at the cap is not valid JSON. Fail here, with the numbers,
+            # instead of letting json.loads report a meaningless column offset — and
+            # instead of letting the retry predicate treat that offset as transient.
+            if finish_reason == 'length':
+                raise TruncatedResponseError(
+                    f'LLM response was truncated at the token cap '
+                    f'(finish_reason="length"): max_tokens={max_tokens}, '
+                    f'completion_tokens={completion_tokens}. The JSON body is incomplete '
+                    f'and cannot be parsed. Raising GRAPHITI_LLM_MAX_TOKENS trades this '
+                    f'truncation for a longer generation that can instead exhaust '
+                    f'GRAPHITI_LLM_REQUEST_TIMEOUT; the durable fix is a smaller input or '
+                    f'a response schema whose arrays are bounded.',
+                    max_tokens=max_tokens,
+                    completion_tokens=completion_tokens,
+                )
             # Many OpenAI-compatible/local models wrap JSON in a ```json fence even under a
             # structured response_format; strip it before parsing.
             return json.loads(self._strip_code_fences(result))

@@ -34,9 +34,9 @@ from graphiti_core.llm_client import LLMClient
 from graphiti_core.llm_client.config import ModelSize
 from graphiti_core.nodes import CommunityNode, EntityNode, EpisodicNode
 from graphiti_core.prompts import prompt_library
-from graphiti_core.prompts.dedupe_edges import EdgeDuplicate
+from graphiti_core.prompts.dedupe_edges import MAX_FACT_IDS, EdgeDuplicate
+from graphiti_core.prompts.extract_edges import MAX_EXTRACTED_EDGES, EdgeTimestamps, ExtractedEdges
 from graphiti_core.prompts.extract_edges import Edge as ExtractedEdge
-from graphiti_core.prompts.extract_edges import EdgeTimestamps, ExtractedEdges
 from graphiti_core.search.search import search
 from graphiti_core.search.search_config import SearchResults
 from graphiti_core.search.search_config_recipes import EDGE_HYBRID_SEARCH_RRF
@@ -138,7 +138,6 @@ async def extract_edges(
 
     start = time()
 
-    extract_edges_max_tokens = 16384
     llm_client = clients.llm_client
 
     # Build mapping from edge type name to list of valid signatures
@@ -199,14 +198,26 @@ async def extract_edges(
         + episode_attribution,
     }
 
+    # No max_tokens override here on purpose. This call used to pass a hard-coded 16384,
+    # so GRAPHITI_LLM_MAX_TOKENS applied to every extraction EXCEPT this one and lowering
+    # it could never take effect for edges. Omitting the argument makes generate_response
+    # fall back to the client's configured budget, exactly like every other call site.
     llm_response = await llm_client.generate_response(
         prompt_library.extract_edges.edge(context),
         response_model=ExtractedEdges,
-        max_tokens=extract_edges_max_tokens,
         group_id=group_id or primary_episode.group_id,
         prompt_name='extract_edges.edge',
     )
     all_edges_data = ExtractedEdges(**llm_response).edges
+    if len(all_edges_data) >= MAX_EXTRACTED_EDGES:
+        # A grammar-forced array close looks identical to the model finishing, so a run
+        # that lands exactly on the cap may have silently dropped real edges. Say so.
+        logger.warning(
+            'Edge extraction returned %d edges, at the schema ceiling of %d; '
+            'the model may have been cut off and facts may be missing',
+            len(all_edges_data),
+            MAX_EXTRACTED_EDGES,
+        )
 
     # Validate entity names
     edges_data: list[ExtractedEdge] = []
@@ -731,6 +742,21 @@ async def resolve_extracted_edge(
     )
     response_object = EdgeDuplicate(**llm_response)
     duplicate_facts = response_object.duplicate_facts
+    if (
+        len(duplicate_facts) >= MAX_FACT_IDS
+        or len(response_object.contradicted_facts) >= MAX_FACT_IDS
+    ):
+        # These lists index into at most len(related_edges) + len(existing_edges) facts,
+        # so reaching the ceiling means the model was emitting integers rather than
+        # answering — the runaway-digit pattern behind the 1.01 chars/token completion.
+        logger.warning(
+            'Edge dedupe returned %d duplicate_facts and %d contradicted_facts against '
+            '%d candidate facts, at the schema ceiling of %d; the indices are unreliable',
+            len(duplicate_facts),
+            len(response_object.contradicted_facts),
+            len(related_edges) + len(existing_edges),
+            MAX_FACT_IDS,
+        )
 
     # Validate duplicate_facts are in valid range for EXISTING FACTS
     invalid_duplicates = [i for i in duplicate_facts if i < 0 or i >= len(related_edges)]

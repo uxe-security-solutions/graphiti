@@ -35,6 +35,7 @@ from graphiti_core.nodes import (
 from graphiti_core.prompts import prompt_library
 from graphiti_core.prompts.dedupe_nodes import NodeDuplicate, NodeResolutions
 from graphiti_core.prompts.extract_nodes import (
+    MAX_EXTRACTED_ENTITIES,
     ExtractedEntities,
     ExtractedEntity,
     SummarizedEntities,
@@ -249,6 +250,16 @@ async def _extract_nodes_single(
     """Extract entities using a single LLM call."""
     llm_response = await _call_extraction_llm(llm_client, episode, context)
     response_object = ExtractedEntities(**llm_response)
+    if len(response_object.extracted_entities) >= MAX_EXTRACTED_ENTITIES:
+        # A grammar-forced array close is indistinguishable downstream from the model
+        # having finished, so a run that lands exactly on the ceiling may have silently
+        # dropped real entities. Say so rather than quietly losing data.
+        logger.warning(
+            'Entity extraction returned %d entities, at the schema ceiling of %d; '
+            'the model may have been cut off and entities may be missing',
+            len(response_object.extracted_entities),
+            MAX_EXTRACTED_ENTITIES,
+        )
     return response_object.extracted_entities
 
 

@@ -20,15 +20,30 @@ from pydantic import BaseModel, Field
 
 from .models import Message, PromptFunction, PromptVersion
 
+# Ceiling on both idx lists. These were bare `list[int]` with no bound, no uniqueness
+# and no enum — the single most exposed schema in the library, because a runaway here
+# costs one character per token (digits and commas) and so buries a truncation at an
+# absurd character offset. That is the shape of the production failure: a 4096-token
+# completion that came back as 4148 characters and died in json.loads.
+#
+# Both lists index into related_edges + existing_edges, and each of those comes from a
+# search capped at search_config.DEFAULT_SEARCH_LIMIT (10), so the whole idx universe
+# is 20 values. 40 is double that: it cannot reject an honest answer (even one that
+# repeats or invents a few out-of-range indices, which resolve_extracted_edge already
+# logs and filters) but it stops an integer stream immediately.
+MAX_FACT_IDS = 40
+
 
 class EdgeDuplicate(BaseModel):
     duplicate_facts: list[int] = Field(
         ...,
         description='List of idx values of duplicate facts (only from EXISTING FACTS range). Empty list if none.',
+        max_length=MAX_FACT_IDS,
     )
     contradicted_facts: list[int] = Field(
         ...,
         description='List of idx values of contradicted facts (from full idx range). Empty list if none.',
+        max_length=MAX_FACT_IDS,
     )
 
 
